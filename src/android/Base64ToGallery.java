@@ -7,15 +7,20 @@ import java.util.Calendar;
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
 
+import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AppCompatActivity;
 import android.util.Base64;
 import android.util.Log;
 
@@ -32,45 +37,78 @@ public class Base64ToGallery extends CordovaPlugin {
 
   // Consts
   public static final String EMPTY_STR = "";
+  private static final int REQUEST_WRITE = 998;
+
+  private CallbackContext callbackContext;
+  private JSONArray args;
 
   @Override
   public boolean execute(String action, JSONArray args,
       CallbackContext callbackContext) throws JSONException {
-
-    String base64               = args.optString(0);
-    String filePrefix           = args.optString(1);
-    boolean mediaScannerEnabled = args.optBoolean(2);
-
-    // isEmpty() requires API level 9
-    if (base64.equals(EMPTY_STR)) {
-      callbackContext.error("Missing base64 string");
-    }
-
-    // Create the bitmap from the base64 string
-    byte[] decodedString = Base64.decode(base64, Base64.DEFAULT);
-    Bitmap bmp           = BitmapFactory.decodeByteArray(decodedString, 0, decodedString.length);
-
-    if (bmp == null) {
-      callbackContext.error("The image could not be decoded");
-
-    } else {
-
-      // Save the image
-      File imageFile = savePhoto(bmp, filePrefix);
-
-      if (imageFile == null) {
-        callbackContext.error("Error while saving image");
-      }
-
-      // Update image gallery
-      if (mediaScannerEnabled) {
-        scanPhoto(imageFile);
-      }
-
-      callbackContext.success(imageFile.toString());
+    if (cordova.hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)){
+      doSave(args, callbackContext);
+    }else{
+      this.callbackContext = callbackContext;
+      this.args = args;
+      cordova.requestPermission(this, REQUEST_WRITE, Manifest.permission.WRITE_EXTERNAL_STORAGE);
     }
 
     return true;
+  }
+
+  private void doSave(JSONArray args, CallbackContext callbackContext){
+    cordova.getThreadPool().execute(new Runnable() {
+      @Override
+      public void run() {
+
+        String base64               = args.optString(0);
+        String filePrefix           = args.optString(1);
+        boolean mediaScannerEnabled = args.optBoolean(2);
+
+        // isEmpty() requires API level 9
+        if (base64.equals(EMPTY_STR)) {
+          callbackContext.error("Missing base64 string");
+        }
+
+        // Create the bitmap from the base64 string
+        byte[] decodedString = Base64.decode(base64, Base64.DEFAULT);
+        Bitmap bmp           = BitmapFactory.decodeByteArray(decodedString, 0, decodedString.length);
+
+        if (bmp == null) {
+          callbackContext.error("The image could not be decoded");
+
+        } else {
+          // Save the image
+          File imageFile = savePhoto(bmp, filePrefix);
+
+          if (imageFile == null) {
+            callbackContext.error("Error while saving image");
+          }else{
+            // Update image gallery
+            if (mediaScannerEnabled) {
+              scanPhoto(imageFile);
+            }
+
+            callbackContext.success(imageFile.toString());
+          }
+        }
+      }
+    });
+  }
+
+  @Override
+  public void onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults) throws JSONException {
+    for(int r:grantResults)
+    {
+      if(r == PackageManager.PERMISSION_DENIED)
+      {
+        this.callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, "WRITE_PERMISSION_DENIED"));
+        return;
+      }
+    }
+    if (requestCode == REQUEST_WRITE){
+      doSave(this.args, this.callbackContext);
+    }
   }
 
   private File savePhoto(Bitmap bmp, String prefix) {
